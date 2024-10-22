@@ -3,9 +3,12 @@ from dash import html, dcc, Input, Output, State
 import dash_bootstrap_components as dbc
 import networkx as nx
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import re
 from typing import Set, List
 import os
+from collections import defaultdict
+import numpy as np
 
 # Stop words definition
 STOP_WORDS = set(
@@ -80,6 +83,248 @@ STOP_WORDS.update(contractions)
 for apostrophe in ["'", "'"]:
     for stopword in contractions:
         STOP_WORDS.add(stopword.replace("'", apostrophe))
+
+class GraphComponentsAnalyzer:
+    def __init__(self, graph: nx.DiGraph):
+        self.graph = graph
+        self.undirected_graph = graph.to_undirected()
+        self.sccs = list(nx.strongly_connected_components(self.graph))
+        self.bccs = list(nx.biconnected_components(self.undirected_graph))
+        
+    def get_scc_dag(self):
+        """Create DAG of strongly connected components"""
+        # Sort SCCs by size in non-decreasing order
+        sorted_sccs = sorted(self.sccs, key=len)
+        
+        # Create mapping of nodes to their SCC index
+        node_to_scc = {}
+        for i, component in enumerate(sorted_sccs):
+            for node in component:
+                node_to_scc[node] = i
+        
+        # Create the DAG
+        scc_dag = nx.DiGraph()
+        
+        # Add nodes with metadata
+        for i, component in enumerate(sorted_sccs):
+            scc_dag.add_node(i, 
+                            size=len(component),
+                            nodes=list(component))
+        
+        # Add edges between components
+        for u in self.graph.nodes():
+            for v in self.graph.successors(u):
+                scc_u = node_to_scc[u]
+                scc_v = node_to_scc[v]
+                if scc_u != scc_v:
+                    scc_dag.add_edge(scc_u, scc_v)
+        
+        return scc_dag
+    
+    def plot_scc_dag(self):
+        """Create a 3D visualization of the SCC DAG"""
+        dag = self.get_scc_dag()
+        pos = nx.spring_layout(dag, dim=3)  # Changed to 3D layout
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add edges
+        edge_x = []
+        edge_y = []
+        edge_z = []  # Added z coordinates
+        for edge in dag.edges():
+            x0, y0, z0 = pos[edge[0]]  # Unpack 3D coordinates
+            x1, y1, z1 = pos[edge[1]]
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+            edge_z.extend([z0, z1, None])
+            
+        fig.add_trace(go.Scatter3d(  # Changed to Scatter3d
+            x=edge_x, y=edge_y, z=edge_z,
+            line=dict(width=2, color='#888'),
+            hoverinfo='none',
+            mode='lines'))
+        
+        # Add nodes
+        node_x = []
+        node_y = []
+        node_z = []  # Added z coordinates
+        node_text = []
+        node_sizes = []
+        
+        for node in dag.nodes():
+            x, y, z = pos[node]  # Unpack 3D coordinates
+            node_x.append(x)
+            node_y.append(y)
+            node_z.append(z)
+            node_text.append(f"SCC {node}<br>Size: {dag.nodes[node]['size']}<br>"
+                        f"Nodes: {', '.join(map(str, dag.nodes[node]['nodes']))}")
+            node_sizes.append(dag.nodes[node]['size'] * 20)
+            
+        fig.add_trace(go.Scatter3d(  # Changed to Scatter3d
+            x=node_x, y=node_y, z=node_z,
+            mode='markers',
+            hoverinfo='text',
+            text=node_text,
+            marker=dict(
+                size=node_sizes,
+                color='#1f77b4',
+                line_width=2)))
+        
+        fig.update_layout(
+            title='DAG of Strongly Connected Components',
+            showlegend=False,
+            hovermode='closest',
+            margin=dict(b=20,l=5,r=5,t=40),
+            scene=dict(  # Added 3D scene configuration
+                xaxis=dict(title='X'),
+                yaxis=dict(title='Y'),
+                zaxis=dict(title='Z'),
+                aspectmode='cube'
+            ),
+            paper_bgcolor='white',  # Ensure white background
+            plot_bgcolor='white'
+        )
+        
+        return fig
+
+    def plot_bcc_forest(self):
+        """Create visualization of the BCC forest"""
+        # Create a graph where nodes are BCCs and edges connect BCCs that share cut vertices
+        forest = nx.Graph()
+        
+        # Add nodes for each BCC
+        for i, component in enumerate(self.bccs):
+            forest.add_node(i, size=len(component), nodes=list(component))
+        
+        # Find cut vertices
+        cut_vertices = nx.articulation_points(self.undirected_graph)
+        
+        # Create mapping of nodes to their BCCs
+        node_to_bccs = defaultdict(set)
+        for i, component in enumerate(self.bccs):
+            for node in component:
+                node_to_bccs[node].add(i)
+        
+        # Add edges between BCCs that share cut vertices
+        for cut_vertex in cut_vertices:
+            connected_bccs = list(node_to_bccs[cut_vertex])
+            for i in range(len(connected_bccs)):
+                for j in range(i + 1, len(connected_bccs)):
+                    forest.add_edge(connected_bccs[i], connected_bccs[j])
+        
+        # Create visualization
+        pos = nx.spring_layout(forest)
+        fig = go.Figure()
+        
+        # Add edges
+        edge_x = []
+        edge_y = []
+        for edge in forest.edges():
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+            
+        fig.add_trace(go.Scatter(
+            x=edge_x, y=edge_y,
+            line=dict(width=0.5, color='#888'),
+            hoverinfo='none',
+            mode='lines'))
+        
+        # Add nodes
+        node_x = []
+        node_y = []
+        node_text = []
+        node_sizes = []
+        
+        for node in forest.nodes():
+            x, y = pos[node]
+            node_x.append(x)
+            node_y.append(y)
+            node_text.append(f"BCC {node}<br>Size: {forest.nodes[node]['size']}<br>"
+                        f"Nodes: {', '.join(map(str, forest.nodes[node]['nodes']))}")
+            node_sizes.append(forest.nodes[node]['size'] * 20)
+            
+        fig.add_trace(go.Scatter(
+            x=node_x, y=node_y,
+            mode='markers',
+            hoverinfo='text',
+            text=node_text,
+            marker=dict(
+                size=node_sizes,
+                color='#2ca02c',
+                line_width=2)))
+        
+        fig.update_layout(
+            title='Biconnected Components Forest',
+            showlegend=False,
+            hovermode='closest',
+            margin=dict(b=20,l=5,r=5,t=40),
+            paper_bgcolor='white',  # Set paper background to white
+            plot_bgcolor='white'    # Set plot background to white
+        )
+        
+        return fig
+    
+    def plot_component_distributions(self):
+        """Plot distributions of SCCs and BCCs by size"""
+        # Calculate size distributions
+        scc_sizes = [len(component) for component in self.sccs]
+        bcc_sizes = [len(component) for component in self.bccs]
+        
+        # Create subplots
+        fig = make_subplots(rows=2, cols=2, 
+                           subplot_titles=('SCC Size Distribution (Vertices)',
+                                         'BCC Size Distribution (Vertices)',
+                                         'SCC Edge Distribution',
+                                         'BCC Edge Distribution'))
+        
+        # Add SCC vertex distribution
+        fig.add_trace(
+            go.Histogram(x=scc_sizes, name='SCC Vertices',
+                        nbinsx=max(10, len(set(scc_sizes))),
+                        histnorm='probability'),
+            row=1, col=1
+        )
+        
+        # Add BCC vertex distribution
+        fig.add_trace(
+            go.Histogram(x=bcc_sizes, name='BCC Vertices',
+                        nbinsx=max(10, len(set(bcc_sizes))),
+                        histnorm='probability'),
+            row=1, col=2
+        )
+        
+        # Calculate edge counts for components
+        scc_edges = []
+        for component in self.sccs:
+            subgraph = self.graph.subgraph(component)
+            scc_edges.append(subgraph.number_of_edges())
+            
+        bcc_edges = []
+        for component in self.bccs:
+            subgraph = self.undirected_graph.subgraph(component)
+            bcc_edges.append(subgraph.number_of_edges())
+        
+        # Add edge distributions
+        fig.add_trace(
+            go.Histogram(x=scc_edges, name='SCC Edges',
+                        nbinsx=max(10, len(set(scc_edges))),
+                        histnorm='probability'),
+            row=2, col=1
+        )
+        
+        fig.add_trace(
+            go.Histogram(x=bcc_edges, name='BCC Edges',
+                        nbinsx=max(10, len(set(bcc_edges))),
+                        histnorm='probability'),
+            row=2, col=2
+        )
+        
+        fig.update_layout(height=800, showlegend=False)
+        return fig
 
 class SentenceGraph:
     def __init__(self, text: str):
@@ -229,7 +474,43 @@ app.layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader("3D Sentence Graph Visualization"),
                 dbc.CardBody([
-                    dcc.Graph(id="graph-visualization")
+                    dcc.Graph(
+                        id="graph-visualization",
+                        style={'height': '800px'}
+                    )
+                ])
+            ], className="mb-4")
+        ])
+    ]),
+    
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("Strongly Connected Components DAG"),
+                dbc.CardBody([
+                    dcc.Graph(id="scc-dag", style={'height': '600px'})
+                ])
+            ], className="mb-4")
+        ])
+    ]),
+    
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("Component Size Distributions"),
+                dbc.CardBody([
+                    dcc.Graph(id="component-distributions", style={'height': '800px'})
+                ])
+            ], className="mb-4")
+        ])
+    ]),
+    
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("Biconnected Components Forest"),
+                dbc.CardBody([
+                    dcc.Graph(id="bcc-forest", style={'height': '600px'})
                 ])
             ], className="mb-4")
         ])
@@ -249,8 +530,11 @@ app.layout = dbc.Container([
 
 @app.callback(
     [Output("graph-visualization", "figure"),
-    Output("degree-distributions", "figure"),
-    Output("metrics-output", "children")],
+     Output("degree-distributions", "figure"),
+     Output("metrics-output", "children"),
+     Output("scc-dag", "figure"),
+     Output("component-distributions", "figure"),
+     Output("bcc-forest", "figure")],
     [Input("analyze-button", "n_clicks")],
     [State("file-selector", "value")],
     prevent_initial_call=True
@@ -265,13 +549,13 @@ def update_output(n_clicks, filename):
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
     except Exception as e:
-        return {}, {}, html.P(f"Error reading file: {str(e)}")
+        return {}, {}, html.P(f"Error reading file: {str(e)}"), {}, {}, {}
     
     # Create graph
     graph = SentenceGraph(text)
     
     # Get graph visualization data
-    node_x, node_y, node_z, edge_x, edge_y, edge_z,    node_text, edge_text, node_sizes = graph.get_graph_data()
+    node_x, node_y, node_z, edge_x, edge_y, edge_z, node_text, edge_text, node_sizes = graph.get_graph_data()
     
     # Create 3D plotly figure for the sentence graph
     fig_graph = go.Figure()
@@ -298,12 +582,16 @@ def update_output(n_clicks, filename):
         hoverinfo='text'
     ))
 
-    fig_graph.update_layout(scene=dict(
-        xaxis=dict(title='X Axis'),
-        yaxis=dict(title='Y Axis'),
-        zaxis=dict(title='Z Axis'),
-        aspectmode='cube'
-    ))
+    fig_graph.update_layout(
+        scene=dict(
+            xaxis=dict(title='X Axis'),
+            yaxis=dict(title='Y Axis'),
+            zaxis=dict(title='Z Axis'),
+            aspectmode='cube'
+        ),
+        height=800,
+        margin=dict(l=0, r=0, t=0, b=0)
+    )
 
     # Get metrics
     metrics = graph.get_metrics()
@@ -340,9 +628,15 @@ def update_output(n_clicks, filename):
         barmode='overlay'
     )
 
-    return fig_graph, fig_degrees, metrics_output
+    # Create component analyzer and get additional visualizations
+    component_analyzer = GraphComponentsAnalyzer(graph.graph)
+    fig_scc_dag = component_analyzer.plot_scc_dag()
+    fig_distributions = component_analyzer.plot_component_distributions()
+    fig_bcc_forest = component_analyzer.plot_bcc_forest()
+
+    return (fig_graph, fig_degrees, metrics_output,
+            fig_scc_dag, fig_distributions, fig_bcc_forest)
 
 # Run the app
 if __name__ == "__main__":
     app.run_server(debug=True)
-
