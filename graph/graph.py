@@ -123,8 +123,8 @@ class SentenceGraph:
                 shared_words = self.sentences[i] & self.sentences[j]
                 if shared_words:
                     G.add_edge(i, j, 
-                             shared_words=shared_words,
-                             weight=len(shared_words))
+                            shared_words=shared_words,
+                            weight=len(shared_words))
         
         return G
 
@@ -182,9 +182,9 @@ class SentenceGraph:
     def get_degree_distributions(self):
         """Get degree distribution data"""
         in_degrees = [sum(d['weight'] for u, v, d in self.graph.in_edges(node, data=True))
-                     for node in self.graph.nodes()]
+                    for node in self.graph.nodes()]
         out_degrees = [sum(d['weight'] for u, v, d in self.graph.out_edges(node, data=True))
-                      for node in self.graph.nodes()]
+                    for node in self.graph.nodes()]
         return in_degrees, out_degrees
 
 def get_token_files():
@@ -249,8 +249,8 @@ app.layout = dbc.Container([
 
 @app.callback(
     [Output("graph-visualization", "figure"),
-     Output("degree-distributions", "figure"),
-     Output("metrics-output", "children")],
+    Output("degree-distributions", "figure"),
+    Output("metrics-output", "children")],
     [Input("analyze-button", "n_clicks")],
     [State("file-selector", "value")],
     prevent_initial_call=True
