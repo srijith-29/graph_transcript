@@ -190,8 +190,7 @@ class GraphComponentsAnalyzer:
         return fig
 
     def plot_bcc_forest(self):
-        """Create visualization of the BCC forest"""
-        # Create a graph where nodes are BCCs and edges connect BCCs that share cut vertices
+        """Create visualization of the BCC forest with improved node scaling"""
         forest = nx.Graph()
         
         # Add nodes for each BCC
@@ -214,8 +213,9 @@ class GraphComponentsAnalyzer:
                 for j in range(i + 1, len(connected_bccs)):
                     forest.add_edge(connected_bccs[i], connected_bccs[j])
         
-        # Create visualization
-        pos = nx.spring_layout(forest)
+        # Create visualization with custom layout
+        # Use k parameter to increase spacing between nodes
+        pos = nx.spring_layout(forest, k=2.0, iterations=50)
         fig = go.Figure()
         
         # Add edges
@@ -233,20 +233,39 @@ class GraphComponentsAnalyzer:
             hoverinfo='none',
             mode='lines'))
         
-        # Add nodes
+        # Add nodes with improved sizing
         node_x = []
         node_y = []
         node_text = []
         node_sizes = []
         
+        # Get all component sizes for scaling
+        sizes = [forest.nodes[node]['size'] for node in forest.nodes()]
+        max_size = max(sizes)
+        min_size = min(sizes)
+        
+        # Calculate node sizes using logarithmic scale
         for node in forest.nodes():
             x, y = pos[node]
             node_x.append(x)
             node_y.append(y)
-            node_text.append(f"BCC {node}<br>Size: {forest.nodes[node]['size']}<br>"
-                        f"Nodes: {', '.join(map(str, forest.nodes[node]['nodes']))}")
-            node_sizes.append(forest.nodes[node]['size'] * 20)
             
+            size = forest.nodes[node]['size']
+            # Use log scale with base 2 and add small constant to avoid log(0)
+            log_size = np.log2(size + 1)
+            # Scale to reasonable range (10-50)
+            scaled_size = 10 + (log_size * 40 / np.log2(max_size + 1))
+            node_sizes.append(scaled_size)
+            
+            # Enhanced hover text with more information
+            node_text.append(
+                f"BCC {node}<br>" +
+                f"Size: {size} nodes<br>" +
+                f"Percentage of total: {(size/sum(sizes)*100):.1f}%<br>" +
+                f"Nodes: {', '.join(map(str, forest.nodes[node]['nodes']))}"
+            )
+    
+        # Add node trace with improved visual parameters
         fig.add_trace(go.Scatter(
             x=node_x, y=node_y,
             mode='markers',
@@ -255,15 +274,52 @@ class GraphComponentsAnalyzer:
             marker=dict(
                 size=node_sizes,
                 color='#2ca02c',
-                line_width=2)))
+                line=dict(width=1, color='darkgreen'),
+                opacity=0.8,
+                symbol='circle',
+                sizemode='diameter'
+            )))
         
+        # Update layout with improved parameters
         fig.update_layout(
-            title='Biconnected Components Forest',
+            title={
+                'text': f'Biconnected Components Forest<br>({len(forest.nodes())} components)',
+                'y':0.95,
+                'x':0.5,
+                'xanchor': 'center',
+                'yanchor': 'top'
+            },
             showlegend=False,
             hovermode='closest',
-            margin=dict(b=20,l=5,r=5,t=40),
-            paper_bgcolor='white',  # Set paper background to white
-            plot_bgcolor='white'    # Set plot background to white
+            margin=dict(b=20, l=5, r=5, t=60),
+            paper_bgcolor='white',
+            plot_bgcolor='white',
+            xaxis=dict(
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False
+            ),
+            yaxis=dict(
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False
+            )
+        )
+        
+        # Add annotation for size information
+        size_info = (
+            f"Largest component: {max_size} nodes<br>"
+            f"Smallest component: {min_size} nodes<br>"
+            f"Average size: {sum(sizes)/len(sizes):.1f} nodes"
+        )
+        fig.add_annotation(
+            text=size_info,
+            xref="paper", yref="paper",
+            x=0.02, y=0.98,
+            showarrow=False,
+            font=dict(size=10),
+            align="left",
+            bgcolor="rgba(255, 255, 255, 0.8)"
         )
         
         return fig
