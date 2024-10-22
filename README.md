@@ -3,7 +3,7 @@ You are given a transcript from a lecture record-
 ing. Your task is to generate a directed graph based on the sentences in the
 transcript.
 Each node represents a set of words from a sentence. Nodes are connected
-if their sentences share common words, with directed edges labeled by the
+if their sentences share common words, with directed edges labeled by the  
 shared words.
 Your task is to:
 • Build a directed graph based on the sentences, where:

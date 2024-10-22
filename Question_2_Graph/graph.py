@@ -189,7 +189,7 @@ class SentenceGraph:
 
 def get_token_files():
     """Get list of available token files"""
-    token_dir = os.path.join('.', 'data', 'token')
+    token_dir = os.path.join(os.path.expanduser('~/Desktop/graph_transcript/data/token'))
     if not os.path.exists(token_dir):
         return []
     return [f for f in os.listdir(token_dir) if f.endswith('.txt')]
@@ -260,7 +260,7 @@ def update_output(n_clicks, filename):
         return dash.no_update
     
     # Read the selected file
-    file_path = os.path.join('.', 'data', 'token', filename)
+    file_path = os.path.join(os.path.expanduser('~/Desktop/graph_transcript/data/token'), filename)
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
