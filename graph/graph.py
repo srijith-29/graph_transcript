@@ -90,6 +90,7 @@ class GraphComponentsAnalyzer:
         self.undirected_graph = graph.to_undirected()
         self.sccs = list(nx.strongly_connected_components(self.graph))
         self.bccs = list(nx.biconnected_components(self.undirected_graph))
+        self.cut_vertices = set(nx.articulation_points(self.undirected_graph))
         
     def get_scc_dag(self):
         """Create DAG of strongly connected components"""
@@ -235,15 +236,12 @@ class GraphComponentsAnalyzer:
         return fig
 
     def plot_bcc_forest(self):
-        """Create visualization of the BCC forest with improved node scaling"""
+        """Create visualization of the BCC forest with articulation points"""
         forest = nx.Graph()
         
         # Add nodes for each BCC
         for i, component in enumerate(self.bccs):
             forest.add_node(i, size=len(component), nodes=list(component))
-        
-        # Find cut vertices
-        cut_vertices = nx.articulation_points(self.undirected_graph)
         
         # Create mapping of nodes to their BCCs
         node_to_bccs = defaultdict(set)
@@ -252,65 +250,82 @@ class GraphComponentsAnalyzer:
                 node_to_bccs[node].add(i)
         
         # Add edges between BCCs that share cut vertices
-        for cut_vertex in cut_vertices:
+        for cut_vertex in self.cut_vertices:
             connected_bccs = list(node_to_bccs[cut_vertex])
             for i in range(len(connected_bccs)):
                 for j in range(i + 1, len(connected_bccs)):
-                    forest.add_edge(connected_bccs[i], connected_bccs[j])
+                    forest.add_edge(connected_bccs[i], connected_bccs[j], 
+                                  cut_vertex=cut_vertex)  # Store the cut vertex with the edge
         
         # Create visualization with custom layout
-        # Use k parameter to increase spacing between nodes
         pos = nx.spring_layout(forest, k=2.0, iterations=50)
         fig = go.Figure()
         
-        # Add edges
+        # Add edges with hover text showing cut vertices
         edge_x = []
         edge_y = []
-        for edge in forest.edges():
+        edge_text = []
+        for edge in forest.edges(data=True):
             x0, y0 = pos[edge[0]]
             x1, y1 = pos[edge[1]]
             edge_x.extend([x0, x1, None])
             edge_y.extend([y0, y1, None])
+            edge_text.extend([
+                f"Cut Vertex: {edge[2]['cut_vertex']}", 
+                f"Cut Vertex: {edge[2]['cut_vertex']}", 
+                None
+            ])
             
         fig.add_trace(go.Scatter(
             x=edge_x, y=edge_y,
             line=dict(width=0.5, color='#888'),
-            hoverinfo='none',
+            hoverinfo='text',
+            text=edge_text,
             mode='lines'))
         
-        # Add nodes with improved sizing
+        # Add nodes (BCCs)
         node_x = []
         node_y = []
         node_text = []
         node_sizes = []
+        node_colors = []  # For coloring nodes that contain cut vertices
         
-        # Get all component sizes for scaling
+        # Get size range for scaling
         sizes = [forest.nodes[node]['size'] for node in forest.nodes()]
         max_size = max(sizes)
         min_size = min(sizes)
         
-        # Calculate node sizes using logarithmic scale
+        # Calculate node sizes and colors
         for node in forest.nodes():
             x, y = pos[node]
             node_x.append(x)
             node_y.append(y)
             
             size = forest.nodes[node]['size']
-            # Use log scale with base 2 and add small constant to avoid log(0)
             log_size = np.log2(size + 1)
-            # Scale to reasonable range (10-50)
             scaled_size = 10 + (log_size * 40 / np.log2(max_size + 1))
             node_sizes.append(scaled_size)
             
-            # Enhanced hover text with more information
+            # Check if this BCC contains any cut vertices
+            nodes_in_bcc = set(forest.nodes[node]['nodes'])
+            cut_vertices_in_bcc = nodes_in_bcc.intersection(self.cut_vertices)
+            
+            # Create hover text with cut vertex information
             node_text.append(
                 f"BCC {node}<br>" +
                 f"Size: {size} nodes<br>" +
                 f"Percentage of total: {(size/sum(sizes)*100):.1f}%<br>" +
+                f"Cut vertices: {', '.join(map(str, cut_vertices_in_bcc)) if cut_vertices_in_bcc else 'None'}<br>" +
                 f"Nodes: {', '.join(map(str, forest.nodes[node]['nodes']))}"
             )
+            
+            # Color nodes based on whether they contain cut vertices
+            if cut_vertices_in_bcc:
+                node_colors.append('#ff7f0e')  # Orange for BCCs with cut vertices
+            else:
+                node_colors.append('#2ca02c')  # Green for regular BCCs
     
-        # Add node trace with improved visual parameters
+        # Add node trace
         fig.add_trace(go.Scatter(
             x=node_x, y=node_y,
             mode='markers',
@@ -318,23 +333,62 @@ class GraphComponentsAnalyzer:
             text=node_text,
             marker=dict(
                 size=node_sizes,
-                color='#2ca02c',
-                line=dict(width=1, color='darkgreen'),
+                color=node_colors,
+                line=dict(width=1, color='darkgray'),
                 opacity=0.8,
                 symbol='circle',
                 sizemode='diameter'
             )))
         
-        # Update layout with improved parameters
+        # Add articulation points as separate nodes
+        cut_x = []
+        cut_y = []
+        cut_text = []
+        
+        for cut_vertex in self.cut_vertices:
+            # Find all BCCs containing this cut vertex
+            connected_bccs = node_to_bccs[cut_vertex]
+            if connected_bccs:
+                # Position cut vertex at average position of its BCCs
+                avg_x = np.mean([pos[bcc][0] for bcc in connected_bccs])
+                avg_y = np.mean([pos[bcc][1] for bcc in connected_bccs])
+                cut_x.append(avg_x)
+                cut_y.append(avg_y)
+                
+                # Create hover text
+                connected_sizes = [len(self.bccs[bcc]) for bcc in connected_bccs]
+                cut_text.append(
+                    f"Cut Vertex: {cut_vertex}<br>" +
+                    f"Connects {len(connected_bccs)} BCCs<br>" +
+                    f"Connected BCC sizes: {', '.join(map(str, connected_sizes))}"
+                )
+        
+        # Add cut vertices trace
+        fig.add_trace(go.Scatter(
+            x=cut_x, y=cut_y,
+            mode='markers',
+            hoverinfo='text',
+            text=cut_text,
+            marker=dict(
+                size=8,
+                color='red',
+                symbol='diamond',
+                line=dict(width=1, color='darkred'),
+                opacity=0.8
+            ),
+            name='Cut Vertices'
+        ))
+        
+        # Update layout
         fig.update_layout(
             title={
-                'text': f'Biconnected Components Forest<br>({len(forest.nodes())} components)',
+                'text': f'Biconnected Components Forest<br>({len(forest.nodes())} components, {len(self.cut_vertices)} cut vertices)',
                 'y':0.95,
                 'x':0.5,
                 'xanchor': 'center',
                 'yanchor': 'top'
             },
-            showlegend=False,
+            showlegend=True,
             hovermode='closest',
             margin=dict(b=20, l=5, r=5, t=60),
             paper_bgcolor='white',
@@ -351,21 +405,20 @@ class GraphComponentsAnalyzer:
             )
         )
         
-        # Add annotation for size information
-        size_info = (
-            f"Largest component: {max_size} nodes<br>"
-            f"Smallest component: {min_size} nodes<br>"
-            f"Average size: {sum(sizes)/len(sizes):.1f} nodes"
-        )
-        fig.add_annotation(
-            text=size_info,
-            xref="paper", yref="paper",
-            x=0.02, y=0.98,
-            showarrow=False,
-            font=dict(size=10),
-            align="left",
-            bgcolor="rgba(255, 255, 255, 0.8)"
-        )
+        # Add legend for node types
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode='markers',
+            marker=dict(size=10, color='#2ca02c'),
+            name='Regular BCC'
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode='markers',
+            marker=dict(size=10, color='#ff7f0e'),
+            name='BCC with Cut Vertex'
+        ))
         
         return fig
     
