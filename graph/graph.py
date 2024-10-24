@@ -640,13 +640,33 @@ def update_output(n_clicks, filename):
 
     fig_graph.update_layout(
         scene=dict(
-            xaxis=dict(title='X Axis'),
-            yaxis=dict(title='Y Axis'),
-            zaxis=dict(title='Z Axis'),
+            xaxis=dict(
+                showbackground=False,
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False,
+                title=''
+            ),
+            yaxis=dict(
+                showbackground=False,
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False,
+                title=''
+            ),
+            zaxis=dict(
+                showbackground=False,
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False,
+                title=''
+            ),
             aspectmode='cube'
         ),
         height=800,
-        margin=dict(l=0, r=0, t=0, b=0)
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor='white',
+        showlegend=False
     )
 
     # Get metrics
