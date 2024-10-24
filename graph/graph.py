@@ -122,9 +122,10 @@ class GraphComponentsAnalyzer:
         return scc_dag
     
     def plot_scc_dag(self):
-        """Create a 3D visualization of the SCC DAG"""
+        """Create a 3D visualization of the SCC DAG with improved spacing"""
         dag = self.get_scc_dag()
-        pos = nx.spring_layout(dag, dim=3)  # Changed to 3D layout
+        # Increase k parameter for more spacing between nodes
+        pos = nx.spring_layout(dag, dim=3, k=2.0, iterations=100)  # Increased k and iterations
         
         # Create figure
         fig = go.Figure()
@@ -132,37 +133,47 @@ class GraphComponentsAnalyzer:
         # Add edges
         edge_x = []
         edge_y = []
-        edge_z = []  # Added z coordinates
+        edge_z = []
         for edge in dag.edges():
-            x0, y0, z0 = pos[edge[0]]  # Unpack 3D coordinates
+            x0, y0, z0 = pos[edge[0]]
             x1, y1, z1 = pos[edge[1]]
             edge_x.extend([x0, x1, None])
             edge_y.extend([y0, y1, None])
             edge_z.extend([z0, z1, None])
             
-        fig.add_trace(go.Scatter3d(  # Changed to Scatter3d
+        fig.add_trace(go.Scatter3d(
             x=edge_x, y=edge_y, z=edge_z,
-            line=dict(width=2, color='#888'),
+            line=dict(width=1, color='#888'),
             hoverinfo='none',
             mode='lines'))
         
-        # Add nodes
+        # Add nodes with improved visibility
         node_x = []
         node_y = []
-        node_z = []  # Added z coordinates
+        node_z = []
         node_text = []
         node_sizes = []
         
+        # Get size range for better scaling
+        sizes = [dag.nodes[node]['size'] for node in dag.nodes()]
+        max_size = max(sizes)
+        min_size = min(sizes)
+        
         for node in dag.nodes():
-            x, y, z = pos[node]  # Unpack 3D coordinates
+            x, y, z = pos[node]
             node_x.append(x)
             node_y.append(y)
             node_z.append(z)
             node_text.append(f"SCC {node}<br>Size: {dag.nodes[node]['size']}<br>"
                         f"Nodes: {', '.join(map(str, dag.nodes[node]['nodes']))}")
-            node_sizes.append(dag.nodes[node]['size'] * 20)
             
-        fig.add_trace(go.Scatter3d(  # Changed to Scatter3d
+            # Logarithmic scaling for node sizes to prevent very large nodes from dominating
+            size = dag.nodes[node]['size']
+            log_size = np.log2(size + 1)
+            scaled_size = 10 + (log_size * 30 / np.log2(max_size + 1))
+            node_sizes.append(scaled_size)
+            
+        fig.add_trace(go.Scatter3d(
             x=node_x, y=node_y, z=node_z,
             mode='markers',
             hoverinfo='text',
@@ -170,21 +181,55 @@ class GraphComponentsAnalyzer:
             marker=dict(
                 size=node_sizes,
                 color='#1f77b4',
-                line_width=2)))
+                opacity=0.8,
+                line=dict(width=1, color='darkblue'))))
         
         fig.update_layout(
             title='DAG of Strongly Connected Components',
             showlegend=False,
             hovermode='closest',
             margin=dict(b=20,l=5,r=5,t=40),
-            scene=dict(  # Added 3D scene configuration
-                xaxis=dict(title='X'),
-                yaxis=dict(title='Y'),
-                zaxis=dict(title='Z'),
+            scene=dict(
+                xaxis=dict(
+                    showbackground=False,
+                    showgrid=False,
+                    zeroline=False,
+                    showticklabels=False,
+                    title=''
+                ),
+                yaxis=dict(
+                    showbackground=False,
+                    showgrid=False,
+                    zeroline=False,
+                    showticklabels=False,
+                    title=''
+                ),
+                zaxis=dict(
+                    showbackground=False,
+                    showgrid=False,
+                    zeroline=False,
+                    showticklabels=False,
+                    title=''
+                ),
                 aspectmode='cube'
             ),
-            paper_bgcolor='white',  # Ensure white background
-            plot_bgcolor='white'
+            paper_bgcolor='white',
+        )
+        
+        # Add size distribution annotation
+        size_info = (
+            f"Largest component: {max_size} nodes<br>"
+            f"Smallest component: {min_size} nodes<br>"
+            f"Total components: {len(dag.nodes())}"
+        )
+        fig.add_annotation(
+            text=size_info,
+            xref="paper", yref="paper",
+            x=0.02, y=0.98,
+            showarrow=False,
+            font=dict(size=10),
+            align="left",
+            bgcolor="rgba(255, 255, 255, 0.8)"
         )
         
         return fig
@@ -325,17 +370,17 @@ class GraphComponentsAnalyzer:
         return fig
     
     def plot_component_distributions(self):
-        """Plot distributions of SCCs and BCCs by size"""
+        """Plot distributions of SCCs and undirected degree"""
         # Calculate size distributions
         scc_sizes = [len(component) for component in self.sccs]
-        bcc_sizes = [len(component) for component in self.bccs]
         
-        # Create subplots
+        # Create subplots with 3 plots instead of 4
         fig = make_subplots(rows=2, cols=2, 
-                           subplot_titles=('SCC Size Distribution (Vertices)',
-                                         'BCC Size Distribution (Vertices)',
-                                         'SCC Edge Distribution',
-                                         'BCC Edge Distribution'))
+                        subplot_titles=('SCC Size Distribution (Vertices)',
+                                        'SCC Edge Distribution',
+                                        'Undirected Degree Distribution'),
+                        specs=[[{}, {}],
+                                [{}, None]])  # Second column in second row is None
         
         # Add SCC vertex distribution
         fig.add_trace(
@@ -345,41 +390,57 @@ class GraphComponentsAnalyzer:
             row=1, col=1
         )
         
-        # Add BCC vertex distribution
-        fig.add_trace(
-            go.Histogram(x=bcc_sizes, name='BCC Vertices',
-                        nbinsx=max(10, len(set(bcc_sizes))),
-                        histnorm='probability'),
-            row=1, col=2
-        )
-        
-        # Calculate edge counts for components
+        # Calculate and add SCC edge distribution
         scc_edges = []
         for component in self.sccs:
             subgraph = self.graph.subgraph(component)
             scc_edges.append(subgraph.number_of_edges())
-            
-        bcc_edges = []
-        for component in self.bccs:
-            subgraph = self.undirected_graph.subgraph(component)
-            bcc_edges.append(subgraph.number_of_edges())
         
-        # Add edge distributions
         fig.add_trace(
             go.Histogram(x=scc_edges, name='SCC Edges',
                         nbinsx=max(10, len(set(scc_edges))),
                         histnorm='probability'),
+            row=1, col=2
+        )
+        
+        # Add undirected degree distribution
+        degrees = [d for _, d in self.undirected_graph.degree()]
+        fig.add_trace(
+            go.Histogram(x=degrees, name='Undirected Degree',
+                        nbinsx=max(10, len(set(degrees))),
+                        histnorm='probability'),
             row=2, col=1
         )
         
-        fig.add_trace(
-            go.Histogram(x=bcc_edges, name='BCC Edges',
-                        nbinsx=max(10, len(set(bcc_edges))),
-                        histnorm='probability'),
-            row=2, col=2
+        # Update layout with improved formatting
+        fig.update_layout(
+            height=800,
+            showlegend=False,
+            title_text="Component and Degree Distributions",
+            title_x=0.5,
         )
         
-        fig.update_layout(height=800, showlegend=False)
+        # Update axes labels
+        fig.update_xaxes(title_text="Size", row=1, col=1)
+        fig.update_xaxes(title_text="Edges", row=1, col=2)
+        fig.update_xaxes(title_text="Degree", row=2, col=1)
+        
+        fig.update_yaxes(title_text="Probability", row=1, col=1)
+        fig.update_yaxes(title_text="Probability", row=1, col=2)
+        fig.update_yaxes(title_text="Probability", row=2, col=1)
+        
+        # Add annotations with distribution statistics
+        scc_stats = f"SCCs: mean size={np.mean(scc_sizes):.1f}, max={max(scc_sizes)}"
+        edge_stats = f"Edges: mean={np.mean(scc_edges):.1f}, max={max(scc_edges)}"
+        degree_stats = f"Degree: mean={np.mean(degrees):.1f}, max={max(degrees)}"
+        
+        fig.add_annotation(text=scc_stats, xref="paper", yref="paper",
+                        x=0.25, y=1.1, showarrow=False, font=dict(size=10))
+        fig.add_annotation(text=edge_stats, xref="paper", yref="paper",
+                        x=0.75, y=1.1, showarrow=False, font=dict(size=10))
+        fig.add_annotation(text=degree_stats, xref="paper", yref="paper",
+                        x=0.25, y=0.45, showarrow=False, font=dict(size=10))
+        
         return fig
 
 class SentenceGraph:
@@ -610,63 +671,138 @@ def update_output(n_clicks, filename):
     # Create graph
     graph = SentenceGraph(text)
     
-    # Get graph visualization data
-    node_x, node_y, node_z, edge_x, edge_y, edge_z, node_text, edge_text, node_sizes = graph.get_graph_data()
+    # Get 3D layout with more spacing
+    pos = nx.spring_layout(graph.graph, k=2, iterations=50, dim=3)
     
-    # Create 3D plotly figure for the sentence graph
+    # Create main figure
     fig_graph = go.Figure()
+    
+    # Initialize edge trace arrays
+    edge_x = []
+    edge_y = []
+    edge_z = []
+    edge_text = []
+    
+    # Create edge traces with hover information
+    for edge in graph.graph.edges(data=True):
+        x0, y0, z0 = pos[edge[0]]
+        x1, y1, z1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+        edge_z.extend([z0, z1, None])
+        
+        # Add hover text for the edge
+        hover_text = (f"Shared words: {', '.join(edge[2]['shared_words'])}<br>"
+                     f"Weight: {edge[2]['weight']}")
+        edge_text.extend([hover_text, hover_text, None])
 
-    # Add edges
+    # Add edges with hover information
     fig_graph.add_trace(go.Scatter3d(
         x=edge_x,
         y=edge_y,
         z=edge_z,
         mode='lines',
-        line=dict(width=0.5, color='gray'),
+        line=dict(
+            width=1,
+            color='rgba(50, 50, 50, 0.4)'
+        ),
+        hoverinfo='text',
         text=edge_text,
-        hoverinfo='text'
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="Arial"
+        )
     ))
 
-    # Add nodes
+    # Add nodes with degree-based coloring
+    node_x = []
+    node_y = []
+    node_z = []
+    node_text = []
+    node_degrees = []
+    
+    # Calculate total degree (in + out) for each node
+    for node in graph.graph.nodes():
+        degree = graph.graph.in_degree(node, weight='weight') + graph.graph.out_degree(node, weight='weight')
+        node_degrees.append(degree)
+    
+    # Normalize degrees for color mapping
+    min_degree = min(node_degrees)
+    max_degree = max(node_degrees)
+    
+    # Create lists for visualization
+    for i, node in enumerate(graph.graph.nodes(data=True)):
+        x, y, z = pos[node[0]]
+        node_x.append(x)
+        node_y.append(y)
+        node_z.append(z)
+        
+        # Add degree information to hover text
+        degree = node_degrees[i]
+        node_text.append(
+            f"Sentence {node[0]}<br>" +
+            f"Original: {node[1]['raw_sentence']}<br>" +
+            f"Key words: {', '.join(node[1]['words'])}<br>" +
+            f"Total Degree: {degree}<br>" +
+            f"In-Degree: {graph.graph.in_degree(node[0], weight='weight')}<br>" +
+            f"Out-Degree: {graph.graph.out_degree(node[0], weight='weight')}"
+        )
+
+    # Add nodes trace with degree-based coloring and SMALLER SIZE
     fig_graph.add_trace(go.Scatter3d(
         x=node_x,
         y=node_y,
         z=node_z,
         mode='markers',
-        marker=dict(size=5, color='blue', opacity=0.8),
+        marker=dict(
+            size=6,  # Reduced from 12 to 6
+            color=node_degrees,
+            colorscale='Viridis',
+            opacity=0.9,
+            line=dict(width=0.5, color='darkgray'),  # Reduced line width from 1 to 0.5
+            colorbar=dict(
+                title='Node Degree',
+                thickness=20,
+                len=0.75,
+                x=0.95
+            ),
+            showscale=True
+        ),
         text=node_text,
-        hoverinfo='text'
+        hoverinfo='text',
+        showlegend=False
     ))
 
+    # Update layout for better visibility and interactivity
     fig_graph.update_layout(
         scene=dict(
-            xaxis=dict(
-                showbackground=False,
-                showgrid=False,
-                zeroline=False,
-                showticklabels=False,
-                title=''
+            xaxis=dict(showbackground=False, showgrid=True, zeroline=True, showticklabels=False, title=''),
+            yaxis=dict(showbackground=False, showgrid=True, zeroline=True, showticklabels=False, title=''),
+            zaxis=dict(showbackground=False, showgrid=True, zeroline=True, showticklabels=False, title=''),
+            aspectmode='cube',
+            dragmode='orbit',
+            camera=dict(
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=1.5, y=1.5, z=1.5)
             ),
-            yaxis=dict(
-                showbackground=False,
-                showgrid=False,
-                zeroline=False,
-                showticklabels=False,
-                title=''
-            ),
-            zaxis=dict(
-                showbackground=False,
-                showgrid=False,
-                zeroline=False,
-                showticklabels=False,
-                title=''
-            ),
-            aspectmode='cube'
         ),
         height=800,
         margin=dict(l=0, r=0, t=0, b=0),
         paper_bgcolor='white',
-        showlegend=False
+        hoverdistance=10,
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="Arial"
+        ),
+        title=dict(
+            x=0.5,
+            y=0.95,
+            xanchor='center',
+            yanchor='top'
+        )
     )
 
     # Get metrics
